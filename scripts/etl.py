@@ -24,7 +24,6 @@ WEATHER_URL = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={l
 RAW_FILE_PATH = '/tmp/raw_weather.json'
 TRANSFORMED_FILE_PATH = '/tmp/transformed_weather.json'
 
-
 def extract():
     res = requests.get(WEATHER_URL)
     data = res.json()
