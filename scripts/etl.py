@@ -4,13 +4,14 @@ import requests
 import pandas as pd
 import psycopg2 as pg2
 
+from sqlalchemy import create_engine
 from datetime import datetime
 
 
 CITY = "Buenos Aires"
 API_KEY = os.getenv("API_KEY")
 
-GEOCODING_URL = f"http://api.openweathermap.org/geo/1.0/direct?q={CITY}&appid={API_KEY}"
+GEOCODING_URL = f"https://api.openweathermap.org/geo/1.0/direct?q={CITY}&appid={API_KEY}"
 
 def get_coords():
      try:
@@ -60,6 +61,18 @@ def transform():
      #WIND COLUMN
      df_wind = pd.json_normalize(df["wind"])
 
+     #RAIN COLUMN
+     df_rain = pd.DataFrame()
+     if "rain" in df.columns:
+          df_rain = pd.json_normalize(df["rain"])
+          df_rain = df_rain.rename(columns={"1h": "rain_mm_h"})
+
+     #SNOW
+     df_snow = pd.DataFrame()
+     if "snow" in df.columns:
+          df_snow = pd.json_normalize(df["snow"])
+          df_snow = df_snow.rename(columns={"1h": "snow_mm_h"})
+
      #CLOUDS COLUMN
      df_clouds = pd.json_normalize(df["clouds"])
 
@@ -67,9 +80,10 @@ def transform():
      df_sys = pd.json_normalize(df["sys"])
      df_sys = df_sys.drop(columns=["type", "id"])
      
-     df_stage = pd.concat([df_coord, df, df_weather, df_main, df_wind, df_clouds, df_sys], axis=1).reset_index(drop=True)
+     columns_to_drop = ["coord", "weather", "main", "wind", "rain", "snow","clouds", "sys", "base"]
+     df = df.drop(columns= [col for col in columns_to_drop if col in df.columns])
 
-     df_stage = df_stage.drop(columns=["coord", "weather", "main", "wind", "clouds", "sys", "base", "cod"])
+     df_stage = pd.concat([df_coord, df, df_weather, df_main, df_wind, df_rain, df_snow, df_clouds, df_sys], axis=1).reset_index(drop=True)
 
      df_stage = df_stage.rename(columns={
           "id": "city_id",
@@ -81,7 +95,10 @@ def transform():
           "main": "weather_main",
           "description": "weather_description",
           "temp": "temperature",
-          "speed": "wind_speed"
+          "speed": "wind_speed",
+          "deg": "wind_deg",
+          "gust": "wind_gust",
+          "all":"cloudiness"
      })
 
      df_stage["sunrise"] = pd.to_datetime(df_stage["sunrise"], unit='s')
@@ -94,6 +111,7 @@ def transform():
      df_stage["datetime"] = df_stage["datetime"].dt.strftime("%Y-%m-%dT%H:%M:%S")
 
      df_stage.to_json(TRANSFORMED_FILE_PATH, orient="records")
+     df_stage.to_json("/opt/airflow/scripts/stage.json", orient="records", lines=True, indent=4)
 
      print("Data transformed correctly")
 
@@ -114,13 +132,13 @@ def load():
 
      QUERY_CREATE_STAGE_TABLE = """
           CREATE TABLE IF NOT EXISTS stg.weather_data(
-               lon FLOAT,
-               lat FLOAT,
+               longitude FLOAT,
+               latitude FLOAT,
                visibility INTEGER,
                datetime TIMESTAMP,
                timezone INTEGER,
-               city_id BIGINT,
-               name VARCHAR(100),
+               city_id INTEGER,
+               city_name VARCHAR(100),
                weather_main VARCHAR(50),
                weather_description VARCHAR(255),
                temperature FLOAT,
@@ -132,18 +150,71 @@ def load():
                sea_level INTEGER,
                grnd_level INTEGER,
                wind_speed FLOAT,
-               deg INTEGER,
-               gust INTEGER,
+               wind_deg INTEGER,
+               wind_gust FLOAT,
+               rain_mm_h FLOAT DEFAULT 0.0,
+               snow_mm_h FLOAT DEFAULT 0.0,
                cloudiness INTEGER,
                country_code CHAR(2),
                sunrise TIMESTAMP,
                sunset TIMESTAMP,
-               ingestion_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+               cod INTEGER,
+               ingestion_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
           );
      """
 
+     QUERY_CREATE_DIM_LOCATION = """
+          CREATE TABLE IF NOT EXISTS dim.dim_location(
+               location_id SERIAL PRIMARY KEY,
+               city_id BIGINT,
+               city_name VARCHAR(100),
+               country_code CHAR(2),
+               latitude FLOAT,
+               longitude FLOAT,
+               timezone INTEGER
+          );
+     """
 
-     #QUERY_CREATE_DIM_CITY = 
+     QUERY_CREATE_DIM_WEATHER = """
+          CREATE TABLE IF NOT EXISTS dim.dim_weather_condition(
+               weather_condition_id SERIAL PRIMARY KEY,
+               main VARCHAR(50),
+               description VARCHAR(255),
+               cloudiness INTEGER
+          );
+     """
+
+     QUERY_CREATE_DIM_DATETIME = """
+          CREATE TABLE IF NOT EXISTS dim.dim_datetime(
+               datetime_id SERIAL PRIMARY KEY,
+               dt TIMESTAMP WITH TIME ZONE,
+               sunrise TIMESTAMP WITH TIME ZONE,
+               sunset TIMESTAMP WITH TIME ZONE
+          );
+     """
+
+     QUERY_CREATE_FACT_METRICS = """
+          CREATE TABLE IF NOT EXISTS dim.fact_weather_metrics(
+               weather_id SERIAL PRIMARY KEY,
+               datetime_id INTEGER REFERENCES dim_datetime(datetime_id),
+               location_id INTEGER REFERENCES dim_location(location_id),
+               weather_condition_id INTEGER REFERENCES dim_weather_condition(weather_condition_id),
+               temperature FLOAT,
+               feels_like FLOAT,
+               temp_min FLOAT,
+               temp_max FLOAT,
+               pressure INTEGER,
+               humidity INTEGER,
+               sea_level INTEGER,
+               grnd_level INTEGER,
+               wind_speed INTEGER,
+               wind_deg INTEGER,
+               wind_gust FLOAT,
+               rain_mm_h FLOAT,
+               snow_mm_h FLOAT,
+               cod INTEGER
+          );
+     """
 
      db_name = os.getenv("POSTGRES_DB")
      db_host = os.getenv("POSTGRES_HOST")
@@ -151,23 +222,20 @@ def load():
      db_user = os.getenv("POSTGRES_USER")
      db_password = os.getenv("POSTGRES_PASSWORD")
 
+     engine = create_engine(f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}", future=True)
+
      try:
-          with pg2.connect(
-               dbname=db_name,
-               host=db_host,
-               port=db_port,
-               user=db_user,
-               password=db_password
-          ) as conn:
-               with conn.cursor() as cursor:
-                    cursor.execute(QUERY_CREATE_STAGE_SCHEMA)
-                    cursor.execute(QUERY_CREATE_DIM_SCHEMA)
-                    cursor.execute(QUERY_CREATE_STAGE_TABLE)
+          with engine.begin() as conn:
+               conn.exec_driver_sql(QUERY_CREATE_STAGE_SCHEMA)
+               conn.exec_driver_sql(QUERY_CREATE_DIM_SCHEMA)
+               conn.exec_driver_sql(QUERY_CREATE_STAGE_TABLE)
 
-          df_stage.to_sql(name="weather_data", con=conn, if_exists="append", schema="stg")
+               df_stage.to_sql(name="weather_data", con=conn, if_exists="append", schema="stg", index=False)
 
+          print("Data loaded to database successfully")
      except Exception as e:
           print(f"Error during SQL operation: {e}")
+
 
 
 extract()

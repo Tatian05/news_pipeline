@@ -1,0 +1,30 @@
+
+    {
+        "longitude":-58.4441,
+        "latitude":-34.6084,
+        "visibility":10000,
+        "datetime":"2025-05-15T21:02:18",
+        "timezone":-10800,
+        "city_id":3427458,
+        "city_name":"Villa Crespo",
+        "cod":200,
+        "weather_main":"Rain",
+        "weather_description":"light rain",
+        "temperature":295.66,
+        "feels_like":296.16,
+        "temp_min":294.82,
+        "temp_max":296.4,
+        "pressure":1013,
+        "humidity":84,
+        "sea_level":1013,
+        "grnd_level":1011,
+        "wind_speed":4.92,
+        "wind_deg":12,
+        "wind_gust":8.05,
+        "rain_mm_h":0.64,
+        "cloudiness":100,
+        "country_code":"AR",
+        "sunrise":"2025-05-15T10:40:39",
+        "sunset":"2025-05-15T20:59:47"
+    }
+
