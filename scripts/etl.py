@@ -23,28 +23,24 @@ def get_coords():
 
 lat, lon = get_coords()
 
-WEATHER_URL = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}"
+WEATHER_URL = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric"
 
 RAW_FILE_PATH = '/tmp/raw_weather.json'
 TRANSFORMED_FILE_PATH = '/tmp/transformed_weather.json'
 
-def extract():
+def extract() -> dict:
     res = requests.get(WEATHER_URL)
     data = res.json()
 
     if res.status_code != 200:
          raise Exception(f"Error in the API: {data}")
-    
-    with open(RAW_FILE_PATH, 'w') as f:
-         json.dump(data, f)
 
     print("Data extracted correctly")
 
-def transform():
-     with open(RAW_FILE_PATH, 'r') as f:
-          weather_data = json.load(f)
+    return data
 
-     df = pd.DataFrame([weather_data])
+def transform(raw_data:dict) -> pd.DataFrame:
+     df = pd.DataFrame([raw_data])
 
      #COORD
      df_coord = pd.json_normalize(df["coord"])
@@ -83,9 +79,9 @@ def transform():
      columns_to_drop = ["coord", "weather", "main", "wind", "rain", "snow","clouds", "sys", "base"]
      df = df.drop(columns= [col for col in columns_to_drop if col in df.columns])
 
-     df_stage = pd.concat([df_coord, df, df_weather, df_main, df_wind, df_rain, df_snow, df_clouds, df_sys], axis=1).reset_index(drop=True)
+     df_cleaned = pd.concat([df_coord, df, df_weather, df_main, df_wind, df_rain, df_snow, df_clouds, df_sys], axis=1).reset_index(drop=True)
 
-     df_stage = df_stage.rename(columns={
+     df_cleaned = df_cleaned.rename(columns={
           "id": "city_id",
           "country":"country_code",
           "lon": "longitude",
@@ -101,50 +97,42 @@ def transform():
           "all":"cloudiness"
      })
 
-     df_stage["sunrise"] = pd.to_datetime(df_stage["sunrise"], unit='s')
-     df_stage["sunrise"] = df_stage["sunrise"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+     df_cleaned["sunrise"] = pd.to_datetime(df_cleaned["sunrise"], unit='s')
+     df_cleaned["sunrise"] = df_cleaned["sunrise"].dt.strftime("%Y-%m-%dT%H:%M:%S")
 
-     df_stage["sunset"] = pd.to_datetime(df_stage["sunset"], unit='s')
-     df_stage["sunset"] = df_stage["sunset"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+     df_cleaned["sunset"] = pd.to_datetime(df_cleaned["sunset"], unit='s')
+     df_cleaned["sunset"] = df_cleaned["sunset"].dt.strftime("%Y-%m-%dT%H:%M:%S")
 
-     df_stage["datetime"] = pd.to_datetime(df_stage["datetime"], unit='s')
-     df_stage["datetime"] = df_stage["datetime"].dt.strftime("%Y-%m-%dT%H:%M:%S")
-
-     df_stage.to_json(TRANSFORMED_FILE_PATH, orient="records")
-     df_stage.to_json("/opt/airflow/scripts/stage.json", orient="records", lines=True, indent=4)
+     df_cleaned["datetime"] = pd.to_datetime(df_cleaned["datetime"], unit='s')
+     df_cleaned["datetime"] = df_cleaned["datetime"].dt.strftime("%Y-%m-%dT%H:%M:%S")
 
      print("Data transformed correctly")
 
+     return df_cleaned
 
-def load():
-     with open(TRANSFORMED_FILE_PATH, 'r') as f:
-          transformed_weather_data = json.load(f)
 
-     df_stage = pd.DataFrame(transformed_weather_data)
-
-     QUERY_CREATE_STAGE_SCHEMA="""
-          CREATE SCHEMA IF NOT EXISTS stg;
+def load(df_transformed:pd.DataFrame):
+     QUERY_CREATE_SCHEMA="""
+          CREATE SCHEMA IF NOT EXISTS weather;
      """
 
-     QUERY_CREATE_DIM_SCHEMA = """
-          CREATE SCHEMA IF NOT EXISTS dim;
-     """
-
-     QUERY_CREATE_STAGE_TABLE = """
-          CREATE TABLE IF NOT EXISTS stg.weather_data(
-               longitude FLOAT,
-               latitude FLOAT,
-               visibility INTEGER,
-               datetime TIMESTAMP,
-               timezone INTEGER,
+     QUERY_CREATE_WEATHER_TABLE = """
+          CREATE TABLE IF NOT EXISTS weather.weather_data(
+               id SERIAL PRIMARY KEY,
                city_id INTEGER,
                city_name VARCHAR(100),
+               country_code CHAR(2),
+               longitude FLOAT,
+               latitude FLOAT,
+               datetime TIMESTAMP,
+               timezone INTEGER,
                weather_main VARCHAR(50),
                weather_description VARCHAR(255),
                temperature FLOAT,
                feels_like FLOAT,
                temp_min FLOAT,
                temp_max FLOAT,
+               visibility INTEGER,
                pressure INTEGER,
                humidity INTEGER,
                sea_level INTEGER,
@@ -154,65 +142,11 @@ def load():
                wind_gust FLOAT,
                rain_mm_h FLOAT DEFAULT 0.0,
                snow_mm_h FLOAT DEFAULT 0.0,
-               cloudiness INTEGER,
-               country_code CHAR(2),
+               cloudiness INTEGER DEFAULT 0,
                sunrise TIMESTAMP,
                sunset TIMESTAMP,
                cod INTEGER,
                ingestion_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-          );
-     """
-
-     QUERY_CREATE_DIM_LOCATION = """
-          CREATE TABLE IF NOT EXISTS dim.dim_location(
-               location_id SERIAL PRIMARY KEY,
-               city_id BIGINT,
-               city_name VARCHAR(100),
-               country_code CHAR(2),
-               latitude FLOAT,
-               longitude FLOAT,
-               timezone INTEGER
-          );
-     """
-
-     QUERY_CREATE_DIM_WEATHER = """
-          CREATE TABLE IF NOT EXISTS dim.dim_weather_condition(
-               weather_condition_id SERIAL PRIMARY KEY,
-               main VARCHAR(50),
-               description VARCHAR(255),
-               cloudiness INTEGER
-          );
-     """
-
-     QUERY_CREATE_DIM_DATETIME = """
-          CREATE TABLE IF NOT EXISTS dim.dim_datetime(
-               datetime_id SERIAL PRIMARY KEY,
-               dt TIMESTAMP WITH TIME ZONE,
-               sunrise TIMESTAMP WITH TIME ZONE,
-               sunset TIMESTAMP WITH TIME ZONE
-          );
-     """
-
-     QUERY_CREATE_FACT_METRICS = """
-          CREATE TABLE IF NOT EXISTS dim.fact_weather_metrics(
-               weather_id SERIAL PRIMARY KEY,
-               datetime_id INTEGER REFERENCES dim_datetime(datetime_id),
-               location_id INTEGER REFERENCES dim_location(location_id),
-               weather_condition_id INTEGER REFERENCES dim_weather_condition(weather_condition_id),
-               temperature FLOAT,
-               feels_like FLOAT,
-               temp_min FLOAT,
-               temp_max FLOAT,
-               pressure INTEGER,
-               humidity INTEGER,
-               sea_level INTEGER,
-               grnd_level INTEGER,
-               wind_speed INTEGER,
-               wind_deg INTEGER,
-               wind_gust FLOAT,
-               rain_mm_h FLOAT,
-               snow_mm_h FLOAT,
-               cod INTEGER
           );
      """
 
@@ -226,22 +160,14 @@ def load():
 
      try:
           with engine.begin() as conn:
-               conn.exec_driver_sql(QUERY_CREATE_STAGE_SCHEMA)
-               conn.exec_driver_sql(QUERY_CREATE_DIM_SCHEMA)
-               conn.exec_driver_sql(QUERY_CREATE_STAGE_TABLE)
+               conn.exec_driver_sql(QUERY_CREATE_SCHEMA)
+               conn.exec_driver_sql(QUERY_CREATE_WEATHER_TABLE)
 
-               df_stage.to_sql(name="weather_data", con=conn, if_exists="append", schema="stg", index=False)
+               df_transformed.to_sql(name="weather_data", con=conn, if_exists="append", schema="weather", index=False)
 
           print("Data loaded to database successfully")
      except Exception as e:
           print(f"Error during SQL operation: {e}")
 
 
-
-extract()
-transform()
-load()
-
-
-
-#docker exec -it airflow_webserver python /opt/airflow/scripts/etl.py
+load(transform(extract()))
