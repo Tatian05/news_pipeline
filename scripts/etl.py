@@ -5,30 +5,31 @@ import pandas as pd
 import psycopg2 as pg2
 
 from sqlalchemy import create_engine
-from datetime import datetime
-
 
 CITY = "Buenos Aires"
 API_KEY = os.getenv("API_KEY")
 
 GEOCODING_URL = f"https://api.openweathermap.org/geo/1.0/direct?q={CITY}&appid={API_KEY}"
 
-def get_coords():
+def get_coords() -> list:
      try:
           res = requests.get(GEOCODING_URL)
-          data = res.json()[0]
+          json_data = res.json()
+
+          if isinstance(json_data, list) and len(json_data) > 0:
+               data = json_data[0]
+               lat = data.get("lat")
+               lon = data.get("lon")
+               return [lat, lon]
+          else:
+               raise ValueError("Respuesta inesperada de la API: {}".format(json_data))
      except requests.RequestException as e:
           print(f"Error in API request: {e}")
-     return data['lat'], data['lon']
 
-lat, lon = get_coords()
 
-WEATHER_URL = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={API_KEY}&units=metric"
+def extract(coords) -> dict:
+    WEATHER_URL = f"https://api.openweathermap.org/data/2.5/weather?lat={coords[0]}&lon={coords[1]}&appid={API_KEY}&units=metric"
 
-RAW_FILE_PATH = '/tmp/raw_weather.json'
-TRANSFORMED_FILE_PATH = '/tmp/transformed_weather.json'
-
-def extract() -> dict:
     res = requests.get(WEATHER_URL)
     data = res.json()
 
@@ -39,7 +40,7 @@ def extract() -> dict:
 
     return data
 
-def transform(raw_data:dict) -> pd.DataFrame:
+def transform(raw_data:dict) -> dict:
      df = pd.DataFrame([raw_data])
 
      #COORD
@@ -108,10 +109,12 @@ def transform(raw_data:dict) -> pd.DataFrame:
 
      print("Data transformed correctly")
 
-     return df_cleaned
+     return df_cleaned.to_dict()
 
 
-def load(df_transformed:pd.DataFrame):
+def load(data_to_load:dict):
+     df = pd.DataFrame(data_to_load)
+
      QUERY_CREATE_SCHEMA="""
           CREATE SCHEMA IF NOT EXISTS weather;
      """
@@ -150,11 +153,11 @@ def load(df_transformed:pd.DataFrame):
           );
      """
 
-     db_name = os.getenv("POSTGRES_DB")
-     db_host = os.getenv("POSTGRES_HOST")
-     db_port = os.getenv("POSTGRES_PORT")
-     db_user = os.getenv("POSTGRES_USER")
-     db_password = os.getenv("POSTGRES_PASSWORD")
+     db_name = os.getenv("DB_NAME")
+     db_host = os.getenv("DB_HOST")
+     db_port = os.getenv("DB_PORT")
+     db_user = os.getenv("DB_USER")
+     db_password = os.getenv("DB_PASSWORD")
 
      engine = create_engine(f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}", future=True)
 
@@ -163,11 +166,9 @@ def load(df_transformed:pd.DataFrame):
                conn.exec_driver_sql(QUERY_CREATE_SCHEMA)
                conn.exec_driver_sql(QUERY_CREATE_WEATHER_TABLE)
 
-               df_transformed.to_sql(name="weather_data", con=conn, if_exists="append", schema="weather", index=False)
+               df.to_sql(name="weather_data", con=conn, if_exists="append", schema="weather", index=False)
 
           print("Data loaded to database successfully")
      except Exception as e:
           print(f"Error during SQL operation: {e}")
 
-
-load(transform(extract()))

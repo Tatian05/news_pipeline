@@ -1,12 +1,31 @@
 services:
-  postgres:
+  airflow_postgres:
     image: postgres:13
+    container_name: airflow_postgres
     env_file:
       - .env
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      POSTGRES_DB: ${AIRFLOW_DB_NAME}
     volumes:
-      - postgres_db:/var/lib/postgresql/data
+      - airflow_db:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+  
+  business_postgres:
+    image: postgres:13
+    container_name: business_postgres
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - business_db:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
 
   redis:
     image: redis:latest
@@ -21,14 +40,14 @@ services:
       - .env
     container_name: airflow_webserver
     depends_on:
-      - postgres
+      - airflow_postgres
       - redis
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__FERNET_KEY: ''
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+      PYTHONPATH: /opt/airflow
     volumes:
       - ./dags:/opt/airflow/dags
       - ./scripts:/opt/airflow/scripts
@@ -42,12 +61,15 @@ services:
       context: .
       dockerfile: Dockerfile
     image: apache/airflow:2.7.3-python3.10
+    env_file:
+      - .env
     container_name: airflow_scheduler
     depends_on:
       - airflow-webserver
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: ${AIRFLOW__CORE__SQL_ALCHEMY_CONN}
+      PYTHONPATH: /opt/airflow
     volumes:
       - ./dags:/opt/airflow/dags
       - ./scripts:/opt/airflow/scripts
@@ -55,4 +77,5 @@ services:
     restart: always
 
 volumes:
-  postgres_db:
+  airflow_db:
+  business_db:
