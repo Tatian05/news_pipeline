@@ -6,7 +6,7 @@ import psycopg2 as pg2
 
 from sqlalchemy import create_engine
 
-CITY = "Buenos Aires"
+CITY = "Cordoba"
 API_KEY = os.getenv("API_KEY")
 
 GEOCODING_URL = f"https://api.openweathermap.org/geo/1.0/direct?q={CITY}&appid={API_KEY}"
@@ -112,6 +112,14 @@ def transform(raw_data:dict) -> dict:
      return df_cleaned.to_dict()
 
 
+db_name = os.getenv("DB_NAME")
+db_host = os.getenv("DB_HOST")
+db_port = os.getenv("DB_PORT")
+db_user = os.getenv("DB_USER")
+db_password = os.getenv("DB_PASSWORD")
+
+engine = create_engine(f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}", future=True)
+
 def load(data_to_load:dict):
      df = pd.DataFrame(data_to_load)
 
@@ -131,18 +139,18 @@ def load(data_to_load:dict):
                timezone INTEGER,
                weather_main VARCHAR(50),
                weather_description VARCHAR(255),
-               temperature FLOAT,
-               feels_like FLOAT,
-               temp_min FLOAT,
-               temp_max FLOAT,
-               visibility INTEGER,
-               pressure INTEGER,
-               humidity INTEGER,
-               sea_level INTEGER,
-               grnd_level INTEGER,
-               wind_speed FLOAT,
-               wind_deg INTEGER,
-               wind_gust FLOAT,
+               temperature FLOAT DEFAULT 0.0,
+               feels_like FLOAT DEFAULT 0.0,
+               temp_min FLOAT DEFAULT 0.0,
+               temp_max FLOAT DEFAULT 0.0,
+               visibility INTEGER DEFAULT 0,
+               pressure INTEGER DEFAULT 0,
+               humidity INTEGER DEFAULT 0,
+               sea_level INTEGER DEFAULT 0,
+               grnd_level INTEGER DEFAULT 0,
+               wind_speed FLOAT DEFAULT 0.0,
+               wind_deg INTEGER DEFAULT 0,
+               wind_gust FLOAT DEFAULT 0.0,
                rain_mm_h FLOAT DEFAULT 0.0,
                snow_mm_h FLOAT DEFAULT 0.0,
                cloudiness INTEGER DEFAULT 0,
@@ -152,14 +160,6 @@ def load(data_to_load:dict):
                ingestion_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
           );
      """
-
-     db_name = os.getenv("DB_NAME")
-     db_host = os.getenv("DB_HOST")
-     db_port = os.getenv("DB_PORT")
-     db_user = os.getenv("DB_USER")
-     db_password = os.getenv("DB_PASSWORD")
-
-     engine = create_engine(f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}", future=True)
 
      try:
           with engine.begin() as conn:

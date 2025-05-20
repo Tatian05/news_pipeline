@@ -53,6 +53,7 @@ services:
       - ./scripts:/opt/airflow/scripts
     ports:
       - "8080:8080"
+      - "8000:8000"
     command: webserver
     restart: always
 
