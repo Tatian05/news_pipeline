@@ -1,2 +1,2 @@
-# weather_pipeline
-Weather pipeline with Airflow
+# news_pipeline
+News pipeline with Airflow
